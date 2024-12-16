@@ -8,6 +8,7 @@
 #include <pspkernel.h>
 #include <pspsysmem_kernel.h>
 #include <psploadexec_kernel.h>
+#include <pspiofilemgr.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +17,10 @@
 #include "rebootex.h"
 #include "utils.h"
 #include "downgrade_ctrl/patch_table.h"
+
+
+extern char eboot_path[];
+
 
 /* function pointers */
 int (* pspKernelGetModel)(void) = NULL;
@@ -26,6 +31,9 @@ int (* pspKernelLoadExecVSHMs1)(const char *path, struct SceKernelLoadExecVSHPar
 SceUID (* pspIoOpen)(char *file, int flags, SceMode mode) = NULL;
 int (* pspIoWrite)(SceUID fd, void *data, u32 len) = NULL;
 int (* pspIoClose)(SceUID fd) = NULL;
+int (* pspIoAssign)(const char *dev1, const char *dev2, const char *dev3, int mode, void *unk1, long unk2) = NULL;
+int (* pspIoUnAssign)(const char *dev) = NULL;
+
 
 /* globals */
 struct SceKernelLoadExecVSHParam g_exec_param;
@@ -45,6 +53,15 @@ int getModel(void)
 {
 	/* return the PSP model */
 	return pspKernelGetModel();
+}
+
+
+int reassign() {
+	u32 ret;
+	pspIoUnAssign("ms0:");
+	pspIoAssign("ms0:","msstor0p1:","fatms0:",IOASSIGN_RDWR,NULL,0);
+	ret = pspIoOpen(eboot_path, PSP_O_RDONLY, 0777);
+	return ret;
 }
 
 int delete_resume_game(void)
@@ -111,7 +128,7 @@ int patch_loadexec_phat(void)
 	KClearCaches();
 	
 	/* just return 0 */
-	return pspKernelLoadExecVSHMs1(OTHER_UPDATER_PATH, &g_exec_param);
+	return pspKernelLoadExecVSHMs1(eboot_path, &g_exec_param);
 }
 
 int patch_loadexec_slim(void)
@@ -138,7 +155,7 @@ int patch_loadexec_slim(void)
 	KClearCaches();
 	
 	/* just return 0 */
-	return pspKernelLoadExecVSHMs1(OTHER_UPDATER_PATH, &g_exec_param);
+	return pspKernelLoadExecVSHMs1(eboot_path, &g_exec_param);
 }
 
 int patch_loadexec_3000(void)
@@ -165,7 +182,7 @@ int patch_loadexec_3000(void)
 	KClearCaches();
 	
 	/* just return 0 */
-	return pspKernelLoadExecVSHMs1(OTHER_UPDATER_PATH, &g_exec_param);
+	return pspKernelLoadExecVSHMs1(eboot_path, &g_exec_param);
 }
 
 int patch_loadexec_4000(void)
@@ -192,7 +209,7 @@ int patch_loadexec_4000(void)
 	KClearCaches();
 	
 	/* just return 0 */
-	return pspKernelLoadExecVSHMs1(OTHER_UPDATER_PATH, &g_exec_param);
+	return pspKernelLoadExecVSHMs1(eboot_path, &g_exec_param);
 }
 
 int patch_loadexec_pspgo(void)
@@ -220,8 +237,13 @@ int patch_loadexec_pspgo(void)
 	/* clear the caches */
 	KClearCaches();
 
-	/* reboot into the updater */
-	return pspKernelLoadExecVSHEf1(PSPGO_UPDATER_PATH, &g_exec_param);
+	if(strstr(eboot_path, "ms0")) {
+		return pspKernelLoadExecVSHMs1(eboot_path, &g_exec_param);
+	}
+	else {
+		/* reboot into the updater */
+		return pspKernelLoadExecVSHEf1(eboot_path, &g_exec_param);
+	}
 }
 
 int patch_loadexec_street(void)
@@ -240,13 +262,13 @@ int patch_loadexec_street(void)
 	KClearCaches();
 	
 	/* just return 0 */
-	return pspKernelLoadExecVSHMs1(OTHER_UPDATER_PATH, &g_exec_param);
+	return pspKernelLoadExecVSHMs1(eboot_path, &g_exec_param);
 }
 
-int launch_updater(void)
+int launch_updater()
 {
 	KClearCaches();
-	
+
 	int res = -1;
 	
 	/* clear our param */
@@ -254,7 +276,7 @@ int launch_updater(void)
 	
 	/* fill the field */
 	g_exec_param.size = sizeof(struct SceKernelLoadExecVSHParam);
-	g_exec_param.argp = (pspKernelGetModel() == 4) ? (PSPGO_UPDATER_PATH) : (OTHER_UPDATER_PATH);
+	g_exec_param.argp = eboot_path;
 	g_exec_param.args = strlen(g_exec_param.argp) + 1;
 	g_exec_param.key = "updater";
 	g_exec_param.vshmain_args_size = 0;

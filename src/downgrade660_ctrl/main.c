@@ -14,11 +14,14 @@
 #include <systemctrl.h>
 #include <libinfinity.h>
 
+#include "common.h"
+
 #include "utils.h"
 #include "patch_table.h"
 #include "decrypt.h"
 
 PSP_MODULE_INFO("DowngraderCTRL", 0x3007, 1, 0);
+
 
 /* function pointers */
 int (* PrologueModule)(void *modmgr_param, SceModule2 *mod) = NULL;
@@ -57,16 +60,26 @@ int ApplyFirmware(SceModule2 *mod)
 	SfoEntry *entries = (SfoEntry *)((char *)g_sfo_buffer + sizeof(SfoHeader));
 	
 	/* Lets open the updater */
-	char *file = (sceKernelGetModel() == 4) ? ("ef0:/PSP/GAME/UPDATE/EBOOT.pbp") : ("ms0:/PSP/GAME/UPDATE/EBOOT.pbp");
-	
+	SceIoStat stats;
+	int status;
+
+	status = sceIoGetstat(eboot_path, &stats);
+
+	if(status < 0) {
+		eboot_path[0] = 'm';
+		eboot_path[1] = 's';
+		status = sceIoGetstat(eboot_path, &stats);
+
+	}
+
 	/* set k1 */
 	u32 k1 = pspSdkSetK1(0);
 	
 	/* lets open the file */
-	SceUID fd = sceIoOpen(file, PSP_O_RDONLY, 0777);
+	SceUID fd; 
 	
 	/* check for failure */
-	if (fd < 0)
+	if ((fd = sceIoOpen(eboot_path, PSP_O_RDONLY, 0777)) < 0)
 	{
 		/* rage */
 		pspSdkSetK1(k1);

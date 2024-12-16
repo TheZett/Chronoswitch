@@ -1,25 +1,33 @@
+UNAME := $(shell uname)
 release: all
-	bin/prxEncrypter $(TARGET).prx
-	pack-pbp $(EXTRA_TARGETS) PARAM.SFO icon0.png NULL NULL NULL NULL data.psp NULL
-	rm -f data.psp
+ifeq ($(UNAME), Linux)
+	bin/psptools/pack_ms_game.py --vanity "$(PSP_EBOOT_TITLE)" EBOOT.PBP EBOOT.PBP
+else
+	bin\\psptools\\pack_ms_game.py --vanity "$(PSP_EBOOT_TITLE)" EBOOT.PBP EBOOT.PBP
+endif
+	unpack-pbp EBOOT.PBP
+	pack-pbp $(EXTRA_TARGETS) PARAM.SFO icon0.png NULL NULL NULL NULL DATA.PSP NULL
+	rm -f DATA.PSP
 	rm -f downgrade_ctrl.h
 	rm -f downgrade660_ctrl.h
+	@mkdir -p PSP/GAME/ChronoSwitch
+	@cp EBOOT.PBP PSP/GAME/ChronoSwitch/
 
 TARGET = downgrader
 OBJS = main.o kernel_exploit.o kernel_land.o rebootex.o utils.o extras.o extra_stubs.o libasm/libinfinityUser.o
 
-INCDIR = ../include
+INCDIR = include
 CFLAGS = -Os -G0 -Wall
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS) -c
  
-LIBDIR = ../lib
+LIBDIR = lib
 LIBS = -lpsppower
 
 PSP_FW_VERSION = 271
 
 EXTRA_TARGETS = EBOOT.PBP
-PSP_EBOOT_TITLE = Chronoswitch Downgrader v7.2
+PSP_EBOOT_TITLE = Chronoswitch Downgrader v7.6.1
 
 BUILD_PRX = 1
 

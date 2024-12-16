@@ -13,22 +13,26 @@
 #include <pspsysmem_kernel.h>
 #include <psploadexec_kernel.h>
 #include <psploadcore.h>
+#include <pspiofilemgr.h>
 
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
 #include <malloc.h>
 
+#include "common.h"
+
 #include "utils.h"
 #include "kernel_land.h"
 #include "kernel_exploit.h"
 #include "rebootex.h"
 
-PSP_MODULE_INFO("Chronoswitch", 0, 1, 1);
+PSP_MODULE_INFO("Chronoswitch", 0, 7, 61);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_VFPU);
 PSP_HEAP_SIZE_KB(3 << 10);
 
-#define DOWNGRADER_VER    ("7.2")
+#define DOWNGRADER_VER    ("7.6.1")
+
 
 typedef struct __attribute__((packed))
 {
@@ -50,7 +54,7 @@ typedef struct __attribute__((packed))
         short unknown; // 16
 } SfoEntry;
     
-u32 get_updater_version(u32 is_pspgo)
+u32 get_updater_version(char *argv)
 {
     int i;
     char *fw_data = NULL;
@@ -60,23 +64,62 @@ u32 get_updater_version(u32 is_pspgo)
     SfoEntry *entries = (SfoEntry *)((char *)sfo_buffer + sizeof(SfoHeader));
     
     /* Lets open the updater */
-    char *file = (is_pspgo) ? ("ef0:/PSP/GAME/UPDATE/EBOOT.PBP") : ("ms0:/PSP/GAME/UPDATE/EBOOT.PBP");
-    
-    /* open file */
-    SceUID fd = sceIoOpen(file, PSP_O_RDONLY, 0777);
-    
+	SceIoStat stats;
+	int status;
+
+	status = sceIoGetstat(eboot_path, &stats);
+
+	if(status < 0) {
+		eboot_path[0] = 'm';
+		eboot_path[1] = 's';
+	}
+
+	status = sceIoGetstat(eboot_path, &stats);
+
+	int go_fw = -1;
+
+	int go_check = sceIoOpen(eboot_path, PSP_O_RDONLY, 0);
+	sceIoLseek32(go_check, 0x346F, PSP_SEEK_SET);
+	u8 go_buf[1] = { 0 };
+	sceIoRead(go_check, go_buf, 1);
+	if(go_buf[0] == 0x63)
+		go_fw = 1;
+	sceIoLseek32(go_check, 0, PSP_SEEK_SET);
+	sceIoClose(go_check);
+
+	if(status < 0 && !strstr(argv, "ef0")) {
+		printf("\nHmmmm? Are you sure you have EBOOT.PBP in PSP/GAME/UPDATE/ ???\n");
+		return 0xFFF;
+	}
+
     /* check for failure */
-    if (fd < 0)
-    {
-        /* error firmware */
-        return 0xFFF;
-    }
-    
-    /* read the PBP header */
-    sceIoRead(fd, pbp_header, sizeof(pbp_header));
-    
-    /* seek to the SFO */
-    sceIoLseek32(fd, pbp_header[8/4], PSP_SEEK_SET);
+    int model = execKernelFunction(getModel);
+	if(model == 4 && go_fw < 0) {
+		pspDebugScreenSetTextColor(0xCC0000FF);
+		printf("\nYour running OFW from a X000 Series, it should be for the GO OFW\n");
+    	pspDebugScreenSetTextColor(0x00BFFF);
+		return 0xFFF;
+	}
+	else if(model != 4 && go_fw == 1) {
+		pspDebugScreenSetTextColor(0xCC0000FF);
+		printf("\nYour running OFW from a GO, it should be for the X000 OFW Series\n");
+    	pspDebugScreenSetTextColor(0x00BFFF);
+		return 0xFFF;
+	}
+	else if(model == 4 && strstr(argv, "ef0") && go_fw >= 0) { return 0xFA4E; /* FAKE some reason CS on ef0 does not like reading from ms0 */ }
+	SceUID fd = sceIoOpen(eboot_path, PSP_O_RDONLY, 0777);
+	if (fd < 0)
+	{
+		printf("\nHmmmm? Are you sure you have EBOOT.PBP in PSP/GAME/UPDATE/ ???\n");
+		/* error firmware */
+		return 0xFFF;
+	}
+
+	/* read the PBP header */
+	sceIoRead(fd, pbp_header, sizeof(pbp_header));
+
+	/* seek to the SFO */
+	sceIoLseek32(fd, pbp_header[8/4], PSP_SEEK_SET);
     
     /* calculate the size of the SFO */
     u32 sfo_size = pbp_header[12/4] - pbp_header[8/4];
@@ -85,15 +128,16 @@ u32 get_updater_version(u32 is_pspgo)
     if (sfo_size > sizeof(sfo_buffer))
     {
         /* too much */
+		printf("\nTo much deditated wammm ... Perhaps not have all your plugins running right now ...\n");
         sceIoClose(fd);
         return 0xFFF;
     }
-    
-    /* read the sfo */
-    sceIoRead(fd, sfo_buffer, sizeof(sfo_buffer));
-    
-    /* close the file */
-    sceIoClose(fd);
+	
+	/* read the sfo */
+	sceIoRead(fd, sfo_buffer, sizeof(sfo_buffer));
+
+	/* close the file */
+	sceIoClose(fd);
     
     /* now parse the SFO */
     for (i = 0; i < header->count; i++)
@@ -110,6 +154,7 @@ u32 get_updater_version(u32 is_pspgo)
     /* see if we went through all the data */
     if (i == header->count)
     {
+		printf("\nHmmm SFO count is too big ... Looks like the EBOOT.PBP is corrupted somehow.\n");
         return 0xFFF;
     }
     
@@ -129,21 +174,28 @@ int main(int argc, char *argv[])
     
     /* initialise the PSP screen */
     pspDebugScreenInit();
-    pspDebugScreenSetTextColor(0x00D05435);
+    pspDebugScreenSetTextColor(0x00BFFF);
+    //pspDebugScreenSetTextColor(0x00D05435);
     
     /* display welcome message */
     printf(
         "Chronoswitch Downgrader" "\n"
-        "Version %s. Built %s %s" "\n" "\n"
+        "Version %s Built %s %s" "\n" "\n"
         
         "Contributions:" "\n"
         "\t"    "6.31/6.35 Support added by Davee" "\n"
         "\t"    "6.38/6.39/6.60 Support added by some1" "\n"
-        "\t"    "6.61 Support added by qwikrazor87" "\n" "\n"
+        "\t"    "6.61 Support added by qwikrazor87" "\n"
+        "\t"    "Removed factory firmware limits (and more) by TheZett" "\n"
+        "\t"    "GO ms0/ef0 UPDATE support added by krazynez" "\n" "\n"
+        "Testers:" "\n"
+        "\t"    "Peter Lustig" "\n"
+        "\t"    "Nall (nallwolf)" "\n"
+        "\t"    "Total Kommando" "\n" "\n"
         
         "Web:" "\n"
-        "\t"    "https://lolhax.org" "\n" "\n"
-        , DOWNGRADER_VER, __DATE__, __TIME__);
+        "\t"    "https://lolhax.org" "\n"
+        , DOWNGRADER_VER, __DATE__, __TIME__ "\n");
 
 #ifdef HBL_SUKKIRI    
     /* Clear html param to 0 */
@@ -254,7 +306,25 @@ int main(int argc, char *argv[])
     sceKernelDelayThread(4*1000*1000);
 
     /* get the updater version */
-    u32 upd_ver = get_updater_version(model == 4);
+    u32 upd_ver = get_updater_version(argv[0]);
+
+	if (upd_ver == 0xFFF) {
+		printf("\nPress R to exit...\n");
+		while (1)
+        {
+            sceCtrlPeekBufferPositive(&pad_data, 1);
+            
+            /* filter out previous buttons */
+            cur_buttons = pad_data.Buttons & ~prev_buttons;
+            prev_buttons = pad_data.Buttons;
+            
+            /* check for cross */
+            if (cur_buttons & PSP_CTRL_RTRIGGER)
+            {
+                ErrorExit(5000, "Exiting in 5 seconds.\n");
+            }
+        }
+	}
 
 	/* make sure that we are not attempting to downgrade a PSP below its firmware boundaries */
 	
@@ -372,8 +442,13 @@ int main(int argc, char *argv[])
     }
     
     /* do confirmation stuff */
-    printf("\n" "Will attempt to Downgrade: %X.%X -> %X.%X.\n", (g_devkit_version >> 24) & 0xF, ((g_devkit_version >> 12) & 0xF0) | ((g_devkit_version >> 8) & 0xF), (upd_ver >> 8) & 0xF, upd_ver & 0xFF);
-    printf("X to continue, R to exit.\n");
+	if(model == 4 && strstr(argv[0], "ef0")) {
+    	printf("\nX to continue, R to exit.\n");
+	}
+	else {
+    	printf("\n" "Currently Running: %X.%X going to Downgrade/Reinstall: %X.%X.\n", (g_devkit_version >> 24) & 0xF, ((g_devkit_version >> 12) & 0xF0) | ((g_devkit_version >> 8) & 0xF), (upd_ver >> 8) & 0xF, upd_ver & 0xFF);
+    	printf("\nX to continue, R to exit.\n");
+	}
     
     /* get button */
     while (1)
@@ -383,6 +458,7 @@ int main(int argc, char *argv[])
         /* filter out previous buttons */
         cur_buttons = pad_data.Buttons & ~prev_buttons;
         prev_buttons = pad_data.Buttons;
+
         
         /* check for cross */
         if (cur_buttons & PSP_CTRL_CROSS)
